@@ -31,7 +31,7 @@ class AudioEnhancer:
         # Load checkpoint
         if checkpoint_path.endswith('.pth'):
             # Check if it's a full checkpoint or just model weights
-            checkpoint = torch.load(checkpoint_path, map_location=self.device)
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
             
             if isinstance(checkpoint, dict) and 'generator_state_dict' in checkpoint:
                 # Full checkpoint
