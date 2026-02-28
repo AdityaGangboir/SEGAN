@@ -1,0 +1,56 @@
+# config.yaml
+# SEGAN Training Configuration
+
+# Paths
+paths:
+  train_noisy: "data/train/noisy"
+  train_clean: "data/train/clean"
+  checkpoint_dir: "backend/checkpoints"
+  log_dir: "logs"
+
+# Audio Settings
+audio:
+  sample_rate: 16000
+  segment_length: 16384  # samples (1.024s at 16kHz)
+
+# Training Settings
+training:
+  batch_size: 8
+  num_epochs: 100
+  num_workers: 0  # Set to 0 for Windows, 2-4 for Linux/Mac
+  save_interval: 5  # Save checkpoint every N epochs
+  d_updates_per_g: 1  # Discriminator updates per generator update
+
+# Model Architecture
+model:
+  generator:
+    base_channels: 64  # 32=faster, 64=better quality, 128=best quality
+  discriminator:
+    base_channels: 32
+
+# Optimizer Settings
+optimizer:
+  g_lr: 0.0002  # Generator learning rate
+  d_lr: 0.0002  # Discriminator learning rate
+  beta1: 0.5
+  beta2: 0.999
+
+# Loss Weights
+loss:
+  lambda_adv: 1.0    # Adversarial loss weight
+  lambda_fm: 10.0    # Feature matching loss weight
+  lambda_l1: 100.0   # L1 reconstruction loss weight
+  lambda_stft: 50.0  # STFT perceptual loss weight
+
+# Advanced Settings
+advanced:
+  use_ema: true
+  ema_decay: 0.999
+  use_amp: true  # Automatic Mixed Precision (GPU only)
+  gradient_clip: 1.0  # Max gradient norm (0 = disabled)
+
+# Data Augmentation
+augmentation:
+  enabled: true
+  gain_range: [0.8, 1.2]  # Random gain multiplication
+  polarity_flip_prob: 0.3  # Probability of flipping polarity
