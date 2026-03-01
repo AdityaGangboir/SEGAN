@@ -11,6 +11,12 @@ import matplotlib.pyplot as plt
 import librosa
 import numpy as np
 from backend.inference import AudioEnhancer
+try:
+    from pydub import AudioSegment
+    PYDUB_AVAILABLE = True
+except ImportError:
+    PYDUB_AVAILABLE = False
+    print("Warning: pydub not available. Non-WAV recorded audio won't be convertible.")
 
 app = Flask(__name__)
 
@@ -470,6 +476,128 @@ HTML_TEMPLATE = '''
             color: #e2e8f0;
         }
         
+        /* ── Recording Section ─────────────────────────────────────────── */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid rgba(102,126,234,0.3);
+            padding-bottom: 10px;
+        }
+        .tab-btn {
+            padding: 10px 24px;
+            border: none;
+            border-radius: 8px 8px 0 0;
+            background: rgba(30,41,59,0.4);
+            color: #94a3b8;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .tab-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+        }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+
+        .record-section {
+            background: rgba(30,41,59,0.4);
+            border-radius: 12px;
+            padding: 30px;
+            border: 2px dashed rgba(118,75,162,0.5);
+            text-align: center;
+        }
+        .record-controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .record-btn {
+            padding: 14px 32px;
+            border: none;
+            border-radius: 50px;
+            font-size: 1.05em;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .record-btn.start {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a6f);
+            color: white;
+            box-shadow: 0 4px 15px rgba(238,90,111,0.4);
+        }
+        .record-btn.start:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(238,90,111,0.5);
+        }
+        .record-btn.stop {
+            background: linear-gradient(135deg, #64748b, #475569);
+            color: white;
+        }
+        .record-btn.stop:hover:not(:disabled) {
+            transform: translateY(-2px);
+        }
+        .record-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .record-timer {
+            font-size: 1.4em;
+            font-weight: 700;
+            color: #f87171;
+            font-variant-numeric: tabular-nums;
+            min-width: 60px;
+            display: none;
+        }
+        .record-timer.active { display: inline; }
+        .record-dot {
+            display: inline-block;
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: #f87171;
+            margin-right: 4px;
+            animation: blink 1s step-start infinite;
+        }
+        @keyframes blink { 50% { opacity: 0; } }
+        #liveCanvas {
+            width: 100%;
+            max-width: 560px;
+            height: 60px;
+            border-radius: 8px;
+            background: #0f1419;
+            display: block;
+            margin: 0 auto 16px;
+        }
+        .recorded-preview {
+            margin-top: 16px;
+            display: none;
+        }
+        .recorded-preview.visible { display: block; }
+        .recorded-preview audio { width: 100%; margin-bottom: 12px; }
+        .rec-enhance-btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 8px;
+        }
+        .rec-enhance-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102,126,234,0.4);
+        }
+        .rec-enhance-btn:disabled { background: #ccc; cursor: not-allowed; }
+
         @media (max-width: 600px) {
             .audio-comparison {
                 grid-template-columns: 1fr;
@@ -500,6 +628,14 @@ HTML_TEMPLATE = '''
         </div>
         {% endif %}
         
+        <!-- Tab switcher -->
+        <div class="tabs">
+            <button class="tab-btn active" id="tabUpload" onclick="switchTab('upload')">📁 Upload File</button>
+            <button class="tab-btn" id="tabRecord" onclick="switchTab('record')">🎙️ Record Audio</button>
+        </div>
+
+        <!-- Upload tab -->
+        <div class="tab-panel active" id="panelUpload">
         <form id="uploadForm" enctype="multipart/form-data" method="post">
             <div class="upload-section">
                 <div class="file-input-wrapper">
@@ -515,6 +651,31 @@ HTML_TEMPLATE = '''
                 ✨ Enhance Audio
             </button>
         </form>
+        </div>
+
+        <!-- Record tab -->
+        <div class="tab-panel" id="panelRecord">
+        <div class="record-section">
+            <p style="color:#94a3b8; margin-bottom:18px;">Record audio directly from your microphone, then enhance it with SEGAN.</p>
+            <canvas id="liveCanvas"></canvas>
+            <div class="record-controls">
+                <button class="record-btn start" id="startRecordBtn" {% if not model_loaded %}disabled{% endif %}>
+                    <span class="record-dot"></span> Start Recording
+                </button>
+                <span class="record-timer" id="recordTimer">0:00</span>
+                <button class="record-btn stop" id="stopRecordBtn" disabled>
+                    ⏹ Stop
+                </button>
+            </div>
+            <div class="recorded-preview" id="recordedPreview">
+                <p style="color:#94a3b8; margin-bottom:8px;">Recorded audio:</p>
+                <audio id="recordedAudio" controls></audio>
+                <button class="rec-enhance-btn" id="recEnhanceBtn" {% if not model_loaded %}disabled{% endif %}>
+                    ✨ Enhance Recorded Audio
+                </button>
+            </div>
+        </div>
+        </div>
         
         
         
@@ -570,7 +731,15 @@ HTML_TEMPLATE = '''
     </div>
     
     <script>
-        // File input handling
+        // ── Tab switching ────────────────────────────────────────────────
+        function switchTab(tab) {
+            document.getElementById('panelUpload').classList.toggle('active', tab==='upload');
+            document.getElementById('panelRecord').classList.toggle('active', tab==='record');
+            document.getElementById('tabUpload').classList.toggle('active', tab==='upload');
+            document.getElementById('tabRecord').classList.toggle('active', tab==='record');
+        }
+
+        // ── File input handling ─────────────────────────────────────────
         const fileInput = document.getElementById('audioFile');
         const fileName = document.getElementById('fileName');
         
@@ -582,56 +751,29 @@ HTML_TEMPLATE = '''
             }
         });
         
-        // Form submission
-        const form = document.getElementById('uploadForm');
+        // ── Shared helper: display results ──────────────────────────────
         const loading = document.getElementById('loading');
         const results = document.getElementById('results');
-        const enhanceBtn = document.getElementById('enhanceBtn');
-        
-        form.addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const formData = new FormData(form);
-            
-            // Show loading
+
+        async function submitAudioForEnhancement(formData, resetBtn) {
             loading.classList.add('active');
             results.classList.remove('active');
-            enhanceBtn.disabled = true;
-            
+            resetBtn.disabled = true;
             try {
-                const response = await fetch('/enhance', {
-                    method: 'POST',
-                    body: formData
-                });
-                
+                const response = await fetch('/enhance', { method: 'POST', body: formData });
                 if (response.ok) {
                     const data = await response.json();
-                    
-                    // Show results
                     document.getElementById('originalAudio').src = data.original;
                     document.getElementById('enhancedAudio').src = data.enhanced;
                     document.getElementById('downloadBtn').href = data.enhanced;
-                    
-                    // Display waveforms
-                    const waveformOriginal = document.getElementById('waveformOriginal');
-                    const waveformEnhanced = document.getElementById('waveformEnhanced');
-                    const waveformContainerOriginal = document.getElementById('waveformContainerOriginal');
-                    const waveformContainerEnhanced = document.getElementById('waveformContainerEnhanced');
-                    
-                    if (data.waveform_original) {
-                        waveformOriginal.src = data.waveform_original;
-                        waveformContainerOriginal.classList.add('visible');
-                    }
-                    
-                    if (data.waveform_enhanced) {
-                        waveformEnhanced.src = data.waveform_enhanced;
-                        waveformContainerEnhanced.classList.add('visible');
-                    }
-                    
+                    const waveformOriginal   = document.getElementById('waveformOriginal');
+                    const waveformEnhanced   = document.getElementById('waveformEnhanced');
+                    const wcOriginal = document.getElementById('waveformContainerOriginal');
+                    const wcEnhanced = document.getElementById('waveformContainerEnhanced');
+                    if (data.waveform_original) { waveformOriginal.src = data.waveform_original; wcOriginal.classList.add('visible'); }
+                    if (data.waveform_enhanced) { waveformEnhanced.src = data.waveform_enhanced; wcEnhanced.classList.add('visible'); }
                     loading.classList.remove('active');
                     results.classList.add('active');
-                    
-                    // Scroll to results
                     results.scrollIntoView({ behavior: 'smooth' });
                 } else {
                     alert('Error processing audio. Please try again.');
@@ -641,58 +783,219 @@ HTML_TEMPLATE = '''
                 alert('Error: ' + error.message);
                 loading.classList.remove('active');
             } finally {
-                enhanceBtn.disabled = false;
+                resetBtn.disabled = false;
             }
+        }
+
+        // ── Upload form submission ───────────────────────────────────────
+        const form       = document.getElementById('uploadForm');
+        const enhanceBtn = document.getElementById('enhanceBtn');
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            await submitAudioForEnhancement(new FormData(form), enhanceBtn);
         });
         
-        // Playback cursor synchronization
+        // ── Playback cursor synchronization ─────────────────────────────
         function setupPlaybackCursor(audioElement, cursorElement) {
             if (!audioElement || !cursorElement) return;
-            
-            // Update cursor position during playback
             audioElement.addEventListener('timeupdate', function() {
                 if (!audioElement.duration) return;
-                
-                const progress = (audioElement.currentTime / audioElement.duration) * 100;
-                cursorElement.style.left = progress + '%';
+                cursorElement.style.left = (audioElement.currentTime / audioElement.duration * 100) + '%';
             });
-            
-            // Show cursor when playing
-            audioElement.addEventListener('play', function() {
-                cursorElement.classList.add('active');
-            });
-            
-            // Hide cursor when paused or ended
-            audioElement.addEventListener('pause', function() {
-                cursorElement.classList.remove('active');
-            });
-            
-            audioElement.addEventListener('ended', function() {
-                cursorElement.classList.remove('active');
-                cursorElement.style.left = '0%';
-            });
-            
-            // Update cursor on seek
+            audioElement.addEventListener('play',  () => cursorElement.classList.add('active'));
+            audioElement.addEventListener('pause', () => cursorElement.classList.remove('active'));
+            audioElement.addEventListener('ended', () => { cursorElement.classList.remove('active'); cursorElement.style.left = '0%'; });
             audioElement.addEventListener('seeked', function() {
                 if (!audioElement.duration) return;
-                const progress = (audioElement.currentTime / audioElement.duration) * 100;
-                cursorElement.style.left = progress + '%';
+                cursorElement.style.left = (audioElement.currentTime / audioElement.duration * 100) + '%';
             });
         }
-        
-        // Initialize cursors after audio loads
-        const originalAudio = document.getElementById('originalAudio');
-        const enhancedAudio = document.getElementById('enhancedAudio');
-        const cursorOriginal = document.getElementById('cursorOriginal');
-        const cursorEnhanced = document.getElementById('cursorEnhanced');
-        
-        // Set up cursors when audio metadata loads
-        originalAudio.addEventListener('loadedmetadata', function() {
-            setupPlaybackCursor(originalAudio, cursorOriginal);
+        document.getElementById('originalAudio').addEventListener('loadedmetadata', function() {
+            setupPlaybackCursor(this, document.getElementById('cursorOriginal'));
         });
-        
-        enhancedAudio.addEventListener('loadedmetadata', function() {
-            setupPlaybackCursor(enhancedAudio, cursorEnhanced);
+        document.getElementById('enhancedAudio').addEventListener('loadedmetadata', function() {
+            setupPlaybackCursor(this, document.getElementById('cursorEnhanced'));
+        });
+
+        // ── Live recording with MediaRecorder ───────────────────────────
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let timerInterval  = null;
+        let elapsedSeconds = 0;
+        let audioContext   = null;
+        let analyser       = null;
+        let animFrameId    = null;
+        let micStream      = null;
+
+        const startBtn       = document.getElementById('startRecordBtn');
+        const stopBtn        = document.getElementById('stopRecordBtn');
+        const timerEl        = document.getElementById('recordTimer');
+        const recordedPreview= document.getElementById('recordedPreview');
+        const recordedAudio  = document.getElementById('recordedAudio');
+        const recEnhanceBtn  = document.getElementById('recEnhanceBtn');
+        const liveCanvas     = document.getElementById('liveCanvas');
+        const canvasCtx      = liveCanvas.getContext('2d');
+
+        function formatTime(s) {
+            const m = Math.floor(s / 60);
+            const ss = String(s % 60).padStart(2, '0');
+            return m + ':' + ss;
+        }
+
+        function drawLiveWaveform() {
+            if (!analyser) return;
+            const bufLen = analyser.frequencyBinCount;
+            const dataArr = new Uint8Array(bufLen);
+            analyser.getByteTimeDomainData(dataArr);
+
+            const w = liveCanvas.width;
+            const h = liveCanvas.height;
+            canvasCtx.fillStyle = '#0f1419';
+            canvasCtx.fillRect(0, 0, w, h);
+
+            canvasCtx.lineWidth   = 2;
+            canvasCtx.strokeStyle = '#f87171';
+            canvasCtx.beginPath();
+            const sliceW = w / bufLen;
+            let x = 0;
+            for (let i = 0; i < bufLen; i++) {
+                const v = dataArr[i] / 128.0;
+                const y = (v * h) / 2;
+                if (i === 0) canvasCtx.moveTo(x, y); else canvasCtx.lineTo(x, y);
+                x += sliceW;
+            }
+            canvasCtx.lineTo(w, h / 2);
+            canvasCtx.stroke();
+            animFrameId = requestAnimationFrame(drawLiveWaveform);
+        }
+
+        startBtn.addEventListener('click', async () => {
+            try {
+                micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            } catch (err) {
+                alert('Microphone access denied: ' + err.message);
+                return;
+            }
+
+            // Set up live waveform
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser     = audioContext.createAnalyser();
+            analyser.fftSize = 2048;
+            const source = audioContext.createMediaStreamSource(micStream);
+            source.connect(analyser);
+            liveCanvas.width  = liveCanvas.offsetWidth  || 560;
+            liveCanvas.height = liveCanvas.offsetHeight || 60;
+            drawLiveWaveform();
+
+            // MediaRecorder — prefer WebM/Opus, fallback to default
+            const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                ? 'audio/webm;codecs=opus' : '';
+            mediaRecorder  = new MediaRecorder(micStream, mimeType ? { mimeType } : {});
+            recordedChunks = [];
+
+            mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
+                recordedAudio.src = URL.createObjectURL(blob);
+                recordedPreview.classList.add('visible');
+                // Store blob for enhance button
+                recEnhanceBtn._blob = blob;
+                recEnhanceBtn._mimeType = mediaRecorder.mimeType;
+            };
+            mediaRecorder.start();
+
+            // Timer
+            elapsedSeconds = 0;
+            timerEl.textContent = formatTime(elapsedSeconds);
+            timerEl.classList.add('active');
+            timerInterval = setInterval(() => {
+                elapsedSeconds++;
+                timerEl.textContent = formatTime(elapsedSeconds);
+            }, 1000);
+
+            startBtn.disabled = true;
+            stopBtn.disabled  = false;
+            recordedPreview.classList.remove('visible');
+        });
+
+        stopBtn.addEventListener('click', () => {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+            micStream && micStream.getTracks().forEach(t => t.stop());
+            clearInterval(timerInterval);
+            timerEl.classList.remove('active');
+            if (animFrameId) cancelAnimationFrame(animFrameId);
+            if (audioContext) audioContext.close();
+            // clear canvas
+            canvasCtx.fillStyle = '#0f1419';
+            canvasCtx.fillRect(0, 0, liveCanvas.width, liveCanvas.height);
+            startBtn.disabled = false;
+            stopBtn.disabled  = true;
+        });
+
+        // ── WAV encoder helpers ─────────────────────────────────────────
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++)
+                view.setUint8(offset + i, string.charCodeAt(i));
+        }
+
+        function encodeWAV(samples, sampleRate) {
+            const buffer = new ArrayBuffer(44 + samples.length * 2);
+            const view   = new DataView(buffer);
+            writeString(view, 0, 'RIFF');
+            view.setUint32(4,  36 + samples.length * 2, true);
+            writeString(view, 8, 'WAVE');
+            writeString(view, 12, 'fmt ');
+            view.setUint32(16, 16, true);          // PCM chunk size
+            view.setUint16(20,  1, true);          // PCM format
+            view.setUint16(22,  1, true);          // mono
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true); // byte rate
+            view.setUint16(32,  2, true);          // block align
+            view.setUint16(34, 16, true);          // bits per sample
+            writeString(view, 36, 'data');
+            view.setUint32(40, samples.length * 2, true);
+            let offset = 44;
+            for (let i = 0; i < samples.length; i++, offset += 2) {
+                const s = Math.max(-1, Math.min(1, samples[i]));
+                view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return new Blob([view], { type: 'audio/wav' });
+        }
+
+        async function blobToWav16k(blob) {
+            const arrayBuf  = await blob.arrayBuffer();
+            const decodeCtx = new AudioContext();
+            const audioBuf  = await decodeCtx.decodeAudioData(arrayBuf);
+            decodeCtx.close();
+
+            const TARGET_SR = 16000;
+            const offCtx = new OfflineAudioContext(
+                1, Math.ceil(audioBuf.duration * TARGET_SR), TARGET_SR);
+            const src = offCtx.createBufferSource();
+            src.buffer = audioBuf;
+            src.connect(offCtx.destination);
+            src.start(0);
+            const rendered  = await offCtx.startRendering();
+            const pcmSamples = rendered.getChannelData(0);
+            return encodeWAV(pcmSamples, TARGET_SR);
+        }
+
+        recEnhanceBtn.addEventListener('click', async () => {
+            const blob = recEnhanceBtn._blob;
+            if (!blob) { alert('No recording found.'); return; }
+            recEnhanceBtn.disabled = true;
+            recEnhanceBtn.textContent = '⏳ Converting...';
+            try {
+                const wavBlob = await blobToWav16k(blob);
+                const formData = new FormData();
+                formData.append('audio', wavBlob, 'recording.wav');
+                await submitAudioForEnhancement(formData, recEnhanceBtn);
+            } catch(err) {
+                alert('Could not convert recording: ' + err.message);
+                recEnhanceBtn.disabled = false;
+            } finally {
+                recEnhanceBtn.textContent = '✨ Enhance Recorded Audio';
+            }
         });
     </script>
 </body>
@@ -706,7 +1009,7 @@ def home():
 
 @app.route('/enhance', methods=['POST'])
 def enhance():
-    """Process audio enhancement."""
+    """Process audio enhancement. Accepts WAV (upload) or WebM/OGG (recorded)."""
     if not model_loaded:
         return jsonify({'error': 'Model not loaded'}), 500
     
@@ -717,22 +1020,21 @@ def enhance():
     
     if file.filename == '':
         return jsonify({'error': 'No file selected'}), 400
-    
-    if not file.filename.endswith('.wav'):
-        return jsonify({'error': 'Only WAV files are supported'}), 400
-    
+
+    if not file.filename.lower().endswith('.wav'):
+        return jsonify({'error': 'Only WAV files accepted. The recorder converts automatically — please try again.'}), 400
+
     try:
         # Generate unique ID for this request
         request_id = str(uuid.uuid4())
-        
-        # Save uploaded file
-        input_path = UPLOAD_FOLDER / f'{request_id}_input.wav'
-        output_path = OUTPUT_FOLDER / f'{request_id}_output.wav'
-        waveform_input = WAVEFORM_FOLDER / f'{request_id}_input.png'
+
+        input_path    = UPLOAD_FOLDER / f'{request_id}_input.wav'
+        output_path   = OUTPUT_FOLDER / f'{request_id}_output.wav'
+        waveform_input  = WAVEFORM_FOLDER / f'{request_id}_input.png'
         waveform_output = WAVEFORM_FOLDER / f'{request_id}_output.png'
-        
+
         file.save(str(input_path))
-        
+
         # Generate waveform for input
         generate_waveform(str(input_path), str(waveform_input))
         
