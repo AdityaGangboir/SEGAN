@@ -99,3 +99,8 @@ htmlcov/
 # External / Deployed Repositories (Hugging Face)
 # ──────────────────────────────────────────
 SEGAN/
+
+# ──────────────────────────────────────────
+# Project Documentation & Presentation Files
+# ──────────────────────────────────────────
+files/
