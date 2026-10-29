@@ -94,3 +94,8 @@ desktop.ini
 .coverage
 htmlcov/
 .pytest_cache/
+
+# ──────────────────────────────────────────
+# External / Deployed Repositories (Hugging Face)
+# ──────────────────────────────────────────
+SEGAN/
